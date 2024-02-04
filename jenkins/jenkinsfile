@@ -194,7 +194,7 @@ pipeline {
         stage('dry run deploy to k8s') {
             steps {
                 echo 'run dry run for helm'
-                sh "cd helmChart && helm upgrade ${params.project_name} -i . --dry-run"
+                sh "cd helmChart && helm upgrade ${params.project_name} -i -n ${params.name_space}. --dry-run"
             }
         }
         stage('validate dry run deploy to k8s') {
