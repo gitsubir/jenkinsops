@@ -129,7 +129,7 @@ pipeline {
             steps {
                 echo 'build docker file'
                 sh "mkdir -p ${WORKSPACE}/${params.project_name}"
-                sh "cd sampleApp/fastapi && docker --config ${WORKSPACE}/${params.project_name} build . -t harisharavindan/${params.project_name}:${env.version}"
+                // sh "cd sampleApp/fastapi && docker --config ${WORKSPACE}/${params.project_name} build . -t harisharavindan/${params.project_name}:${env.version}"
             }
         }
 
@@ -143,7 +143,7 @@ pipeline {
                 echo 'docker login'
 
                 withCredentials([usernamePassword(credentialsId: 'docker', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_TOKEN')]) {
-                sh "docker --config ${WORKSPACE}/${params.project_name} login -u $DOCKER_USERNAME -p $DOCKER_TOKEN"
+                // sh "docker --config ${WORKSPACE}/${params.project_name} login -u $DOCKER_USERNAME -p $DOCKER_TOKEN"
                 }
             }
         }
@@ -158,10 +158,10 @@ pipeline {
                 script {
                     try {
                     echo 'Docker Scout Scan'
-                    sh "curl -sSfL https://raw.githubusercontent.com/docker/scout-cli/main/install.sh | sh -s --"
+                    // sh "curl -sSfL https://raw.githubusercontent.com/docker/scout-cli/main/install.sh | sh -s --"
 
-                    sh "docker --config ${WORKSPACE}/${params.project_name} scout cves githubstars:${env.version}"
-                    sh "docker --config ${WORKSPACE}/${params.project_name} scout recommendations githubstars:${env.version}"
+                    // sh "docker --config ${WORKSPACE}/${params.project_name} scout cves githubstars:${env.version}"
+                    // sh "docker --config ${WORKSPACE}/${params.project_name} scout recommendations githubstars:${env.version}"
 
                 } catch (err) {
                     echo "docker scout failed"
@@ -179,7 +179,7 @@ pipeline {
                 echo "docker push to dockerhub"
                 
                 withCredentials([usernamePassword(credentialsId: 'docker', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_TOKEN')]) {
-                sh "docker --config ${WORKSPACE}/${params.project_name} push $DOCKER_USERNAME/${params.project_name}:${env.version}"
+                // sh "docker --config ${WORKSPACE}/${params.project_name} push $DOCKER_USERNAME/${params.project_name}:${env.version}"
                 }
                 
         }
