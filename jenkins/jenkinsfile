@@ -12,13 +12,54 @@ pipeline {
 //          }
 //         }
 //         }
+        stage('Setup Parameters') {
+            steps {
+                script { 
+                    properties([
+                        parameters([
+                            choice(
+                                choices: ['build', 'deploy', 'cicd'],
+                                description: 'should the deployment be run or both or only build', 
+                                name: 'choice_build_deploy'
+                            ),
+                            booleanParam(
+                                defaultValue: true, 
+                                description: 'should the the docker build be run?', 
+                                name: 'docker_build'
+                            ),
+                            string(
+                                name: 'project_name',
+                                trim: true
+                            ),
+                            string(
+                                name: 'name_space',
+                                trim: true
+                            )
+                        ])
+                    ])
+                }
+            }
+        }
+
         stage('Clone GitHub Repo') {
             steps {
                 git branch: 'main', url: 'https://github.com/gitsubir/jenkinsops.git'
-                sh "cd sampleApp/fastapi"
-                sh "sudo /home/ec2-user/sonar-scanner-5.0.1.3006-linux/bin/sonar-scanner -Dsonar.projectKey=subir -Dsonar.sources=. -Dsonar.host.url=http://172.31.1.253:9000 -Dsonar.token=sqp_6ce3fec60fd2c2c5d54a6ffcb22a41c290030aee"
             }
         }
+
+        stage('Setup env') {
+            steps {
+                script { 
+                        sh "pwd"
+                        sh "env"
+                        sh "ls -alrt"
+                        env.version = sh(returnStdout: true, script: 'cat sampleApp/fastapi/version').trim()
+                        sh"echo version"
+                        sh"echo ${env.version}"
+                }
+            }
+        }
+
         stage('Test') { // python unit test the code
             steps {
                 script {
@@ -43,9 +84,15 @@ pipeline {
         }
         stage('Sonar Scan') { // sonar scan
             steps {
-                echo 'sonar scan the code...'
-                sh "cd sampleApp/fastapi"
-                sh"sudo /home/ec2-user/sonar-scanner-5.0.1.3006-linux/bin/sonar-scanner -Dsonar.projectKey=py -Dsonar.sources=. -Dsonar.host.url=http://172.31.1.253:9000 -Dsonar.token=sqp_94cc54310f80df64e1173e4a57611f67089307c0"
+                script {
+                    try {
+                    echo 'sonar scan the code...'
+                    sh "cd sampleApp/fastapi"
+                    //sh"sudo /home/ec2-user/sonar-scanner-5.0.1.3006-linux/bin/sonar-scanner -Dsonar.projectKey=py -Dsonar.sources=. -Dsonar.host.url=http://172.31.1.253:9000 -Dsonar.token="
+                } catch (err) {
+                    echo "sonar failed"
+                }
+                }
             }
         }
         stage('Sonar Qube report') { 
@@ -58,29 +105,116 @@ pipeline {
                 echo 'upload the pypi to nexus repository' 
             }
         }
-        stage('Hado Lint Dockerfile') { 
+        stage('Hado Lint Dockerfile') {
             steps {
-                echo 'Generating the report...' 
+                script {
+                    try {
+                    echo "Lint Dockerfile"
+                    sh "cd sampleApp/fastapi"
+                    sh "ls -alrt"
+                    sh "pwd"
+                    sh "hadolint sampleApp/fastapi/Dockerfile"
+                } catch (err) {
+                    echo "lint failed"
+                }
             }
         }
-        stage('Docker Build') { 
+        }
+        stage('Docker Build') {
+            when {
+                expression {
+                    return params.docker_build == true
+                }
+            }
             steps {
-                echo 'Generating the report...'
+                echo 'build docker file'
+                sh "mkdir -p ${WORKSPACE}/${params.project_name}"
+                sh "cd sampleApp/fastapi && docker --config ${WORKSPACE}/${params.project_name} build . -t harisharavindan/${params.project_name}:${env.version}"
             }
         }
-        stage('docker push to ecr') { 
+
+        stage('Docker Login') { // docker login
+            when {
+                expression {
+                    return params.docker_build == true
+                }
+            }
             steps {
-                echo 'Generating the report...' 
+                echo 'docker login'
+
+                withCredentials([usernamePassword(credentialsId: 'docker', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_TOKEN')]) {
+                sh "docker --config ${WORKSPACE}/${params.project_name} login -u $DOCKER_USERNAME -p $DOCKER_TOKEN"
+                }
+            }
+        }
+
+        stage('Docker Scout Scan') { 
+            when {
+                expression {
+                    return params.docker_build == true
+                }
+            }
+            steps {
+                script {
+                    try {
+                    echo 'Docker Scout Scan'
+                    sh "curl -sSfL https://raw.githubusercontent.com/docker/scout-cli/main/install.sh | sh -s --"
+
+                    sh "docker --config ${WORKSPACE}/${params.project_name} scout cves githubstars:${env.version}"
+                    sh "docker --config ${WORKSPACE}/${params.project_name} scout recommendations githubstars:${env.version}"
+
+                } catch (err) {
+                    echo "docker scout failed"
+                }
+                }
+            }
+        }
+        stage('docker push to dockerhub') { 
+            when {
+                expression {
+                    return params.docker_build == true
+                }
+            }
+            steps {
+                echo "docker push to dockerhub"
+                
+                withCredentials([usernamePassword(credentialsId: 'docker', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_TOKEN')]) {
+                sh "docker --config ${WORKSPACE}/${params.project_name} push $DOCKER_USERNAME/${params.project_name}:${env.version}"
+                }
+                
         }
         }
         stage('create helm chart and package') { 
             steps {
-                echo 'Generating the report...' 
+                echo 'helm lint and package the chart'
+                sh "cd helmChart && helm lint ."
+                sh "helm pacakge ."
             }
         }
-        stage('deploy to k8s') { 
+        stage('dry run deploy to k8s') {
             steps {
-                echo 'Generating the report...' 
+                echo 'run dry run for helm'
+                sh "cd helmChart && helm upgrade ${params.project_name} -i . --dry-run"
+            }
+        }
+        stage('validate dry run deploy to k8s') {
+            steps {
+	      		// Create an Approval Button with a timeout of 15minutes.
+	                timeout(time: 15, unit: "MINUTES") {
+	                    input message: 'Verify the helm dry run and approve helm install/upgrade', ok: 'Yes'
+	                }
+        }
+        }
+         stage('deploy to k8s') {
+            steps {
+                echo 'helm upgrade' 
+            }
+        }
+        stage('test the deployment') {
+            steps {
+                echo 'test the helm deployment'
+                sh "helm ls | grep ${params.project_name}"
+                sh "helm test ${params.project_name}"
             }
         }
     }
@@ -90,9 +224,8 @@ pipeline {
             cleanWs(cleanWhenNotBuilt: false,
                     deleteDirs: true,
                     disableDeferredWipeout: true,
-                    notFailBuild: true,
-                    patterns: [[pattern: '.gitignore', type: 'INCLUDE'],
-                               [pattern: '.propsfile', type: 'EXCLUDE']])
+                    )
         }
     }
 }
+
